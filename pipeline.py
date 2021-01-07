@@ -4,10 +4,11 @@ import numpy as np
 IDENTIFIER_THRESHOLD = 0.5
 EVALUATOR_THRESHOLD = 0.5
 
-def get_catch_evaluation(frame, evaluator_model):
+def get_catch_evaluation(frame, image_preprocessor, evaluator_model):
   """ Runs the catch evaluator model on the image data
       Args:
         frame - a (180, 320, 3) numpy array representing the frame
+        image_preprocessor - the image preprocessing closure that normalizes the image
         evaluator_model - the catch evaluator model instance
       Returns:
         the int label representation assigned to the frame
@@ -15,26 +16,34 @@ def get_catch_evaluation(frame, evaluator_model):
   # convert image to grayscale (model only looking for shapes, not colours!)
   frame = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
   frame = np.expand_dims(frame, axis=(0,3))
-  frame = frame * 1./255 # rescale
 
-  prediction = evaluator_model.predict(frame)
+  prediction = evaluator_model.predict(image_preprocessor(frame))
 
-  return prediction
+  return prediction[0][0]
 
-def get_is_catch(landmarks, identifier_model):
+def get_is_catch(processed_landmarks, identifier_model):
   """ Runs the catch identifier model on the pose data
+      Args:
+        processed_landmarks - (22, 2) numpy array
+      Returns:
+        is_catch - boolean value
+  """
+  prediction = identifier_model.predict(processed_landmarks)
+
+  return prediction[0][0] > IDENTIFIER_THRESHOLD
+
+def get_processed_landmarks(landmarks):
+  """ Applies filter to landmarks and normalizes the data
       Args:
         landmarks - (33, 4) numpy array
       Returns:
-        is_catch - boolean value
+        processed_landmarks - (None, 22, 2) normalized numpy array
   """
   processed_landmarks = filter_landmarks(landmarks)
   processed_landmarks = normalize_landmarks(processed_landmarks)
   processed_landmarks = np.expand_dims(processed_landmarks, axis=0)
 
-  prediction = identifier_model.predict(processed_landmarks)
-
-  return prediction[0][0] > IDENTIFIER_THRESHOLD
+  return processed_landmarks
 
 def get_pose_data(frame, pose_model):
   """ Runs BlazePose model inference on the given frame
@@ -80,17 +89,21 @@ def preprocess_frame(raw_frame):
 
   return frame
 
-def infer(video, pose_model, identifier_model, evaluator_model):
+def infer(video, pose_model, identifier_model, evaluator_model, show_frames=True, show_predictions=False):
   """ Runs inference on the video, frame-by-frame
       Args:
         video - path to the video file
         pose_model - BlazePose model instance
         identifier_model - identifier model instance
         evaluator_model - evaluator model instance
+        show_frames - whether to display the video frame as it's analyzed
+        show_predictions - whether to display the sigmoid output value on catch evaluations
       Returns:
         None. Prints out labels as the video file is read.
   """
   cap = cv2.VideoCapture(video)
+
+  image_preprocessor = get_image_preprocessor()
 
   while cap.isOpened():
     success, raw_frame = cap.read()
@@ -98,13 +111,19 @@ def infer(video, pose_model, identifier_model, evaluator_model):
       break
     
     frame = preprocess_frame(raw_frame)
-    # cv2_imshow(frame)
+
+    if show_frames:
+      cv2_imshow(frame)
 
     landmarks = get_pose_data(frame, pose_model)
-    is_catch = get_is_catch(landmarks, identifier_model)
+    processed_landmarks = get_processed_landmarks(landmarks)
+
+    is_catch = get_is_catch(processed_landmarks, identifier_model)
 
     if is_catch: # conditionally continue with processing
-      catch_evaluation = get_catch_evaluation(frame, evaluator_model)
+      catch_evaluation = get_catch_evaluation(frame, image_preprocessor, evaluator_model)
+      if show_predictions:
+        print("Sigmoid output: " + str(catch_evaluation))
       if catch_evaluation > EVALUATOR_THRESHOLD:
         print("Good")
       else:

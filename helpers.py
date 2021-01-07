@@ -67,6 +67,35 @@ def normalize_landmarks(landmarks):
 
   return landmarks
 
+def get_image_preprocessor():
+  """ Returns a closure that can be called on a
+      frame image to apply normalization before 
+      prediction
+  """
+  image_preprocessor_obj = keras.preprocessing.image.ImageDataGenerator(
+    featurewise_center=True,
+    featurewise_std_normalization=True,
+  )
+
+  fit_data = np.load("idg-fit-data.npz", allow_pickle=True)
+  fit_data = fit_data['data']
+
+  image_preprocessor_obj.fit(fit_data)
+
+  def image_preprocessor(img_arr):
+    """ Normalizes the given image.
+        Args:
+          img_arr - a (1, 180, 320, 1) numpy array 
+            representing a set of N images 
+    """
+    flow = image_preprocessor_obj.flow(img_arr, [1])
+    for i, (X, _) in enumerate(flow):
+      if i == 1:
+        break
+      yield X #ignore Y
+  
+  return image_preprocessor
+
 def recall_m(y_true, y_pred):
     true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
     possible_positives = K.sum(K.round(K.clip(y_true, 0, 1)))
